@@ -1,0 +1,12 @@
+{
+  "name": "api-manager",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "@fastify/cors": "^9",
+    "bullmq": "^5",
+    "fastify": "^4",
+    "ioredis": "^5",
+    "socket.io": "^4"
+  }
+}
