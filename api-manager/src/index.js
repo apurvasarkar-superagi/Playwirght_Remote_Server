@@ -24,7 +24,7 @@ fastify.get('/api/stats', async () => {
 
 // ─── Worker status + logs via Redis pub/sub ──────────────────────────────────
 
-await subscriber.subscribe('worker:status', 'worker:log')
+await subscriber.subscribe('worker:status', 'worker:log', 'worker:command')
 
 subscriber.on('message', (channel, raw) => {
   const data = JSON.parse(raw)
@@ -32,6 +32,8 @@ subscriber.on('message', (channel, raw) => {
     io.emit('worker:status', data)
   } else if (channel === 'worker:log') {
     io.emit('worker:log', data)
+  } else if (channel === 'worker:command') {
+    io.emit('worker:command', data)
   }
 })
 

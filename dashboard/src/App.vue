@@ -6,6 +6,18 @@ import LogViewer from './components/LogViewer.vue'
 const store = useStore()
 onMounted(() => store.init())
 
+// ── Live duration timer ───────────────────────────────────────────────────────
+const now = ref(Date.now())
+const timer = setInterval(() => { now.value = Date.now() }, 1000)
+onUnmounted(() => clearInterval(timer))
+
+function fmtDuration(run) {
+  const ms = (run.endTime || now.value) - run.startTime
+  const s = Math.floor(ms / 1000)
+  const m = Math.floor(s / 60)
+  return m > 0 ? `${m}m ${s % 60}s` : `${s}s`
+}
+
 // ── Parallels dropdown ───────────────────────────────────────────────────────
 const dropdownOpen = ref(false)
 const dropdownRef = ref(null)
@@ -133,7 +145,47 @@ const sidebarOpen = ref(true)
         :class="sidebarOpen ? 'w-72' : 'w-0 border-r-0'"
       >
         <div class="w-72 flex-1 flex flex-col overflow-y-auto">
-          <!-- Empty — ready for new content -->
+
+          <!-- Sidebar header -->
+          <div class="px-4 py-3 border-b border-slate-700 shrink-0 flex items-center justify-between">
+            <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Tests</span>
+            <span class="text-xs font-mono text-slate-600">{{ store.runs.length }}</span>
+          </div>
+
+          <!-- Per-run rows -->
+          <button
+            v-for="run in store.runs"
+            :key="run.id"
+            @click="store.selectRun(run.id)"
+            :class="[
+              'flex items-start gap-3 px-4 py-3 border-b border-slate-800 text-left transition-colors w-full',
+              store.selectedRun === run.id
+                ? 'bg-slate-700'
+                : 'hover:bg-slate-800',
+              run.status === 'failed' ? 'border-l-2 border-l-red-600' : '',
+              run.status === 'passed' ? 'border-l-2 border-l-green-600' : '',
+              run.status === 'running' ? 'border-l-2 border-l-yellow-500' : '',
+            ]"
+          >
+            <!-- Status icon -->
+            <span class="shrink-0 w-4 flex justify-center pt-0.5">
+              <span v-if="run.status === 'running'" class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse mt-1 block"></span>
+              <span v-else-if="run.status === 'passed'" class="text-green-400 text-sm leading-none">✓</span>
+              <span v-else class="text-red-400 text-sm leading-none">✕</span>
+            </span>
+
+            <!-- Scenario name + duration -->
+            <span class="flex flex-col flex-1 min-w-0">
+              <span class="text-sm text-slate-200 leading-snug break-words">{{ run.scenarioName }}</span>
+              <span class="text-xs text-slate-500 mt-0.5 font-mono">{{ fmtDuration(run) }}</span>
+            </span>
+          </button>
+
+          <!-- Empty state -->
+          <div v-if="!store.runs.length" class="px-4 py-6 text-xs text-slate-600 italic">
+            No tests run yet. Start a scenario to see it here.
+          </div>
+
         </div>
       </aside>
 

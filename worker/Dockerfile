@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y \
     libatspi2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 
-RUN pip install playwright==1.57.0 redis
+RUN pip install playwright==1.57.0 redis "websockets>=10,<13"
 RUN playwright install chromium
 
 COPY src/server.py /app/server.py
