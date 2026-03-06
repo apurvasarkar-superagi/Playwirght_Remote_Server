@@ -25,6 +25,7 @@ from websockets.exceptions import ConnectionClosed
 
 REDIS_URL = os.environ.get("REDIS_URL", "redis://localhost:6379")
 WORKER_ID = _socket.gethostname()
+WORKER_IP = _socket.gethostbyname(WORKER_ID)  # container's routable IP for direct routing
 PROXY_PORT = 9222
 SERVER_PORT = 9223
 
@@ -81,12 +82,20 @@ def set_scenario(name: str | None) -> None:
 def register(status: str) -> None:
     global _status
     _status = status
-    payload = {"id": WORKER_ID, "status": status, "lastHeartbeat": int(time.time() * 1000)}
+    payload = {
+        "id": WORKER_ID,
+        "ip": WORKER_IP,
+        "status": status,
+        "lastHeartbeat": int(time.time() * 1000),
+    }
     if _scenario:
         payload["scenarioName"] = _scenario
     data = json.dumps(payload)
     r.setex(f"worker:{WORKER_ID}", 30, data)
     r.publish("worker:status", data)
+    # Release the acquire lock so the queue can assign this worker again
+    if status == "idle":
+        r.delete(f"lock:worker:{WORKER_ID}")
 
 
 def publish_log(message: str) -> None:

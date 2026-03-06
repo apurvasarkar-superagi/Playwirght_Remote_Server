@@ -13,11 +13,13 @@ export const useStore = defineStore('main', {
     commands: [], // [{ workerId, method, label, param, error, timestamp }]
     runs: [],     // [{ id, scenarioName, workerId, status, startTime, endTime, hasError }]
     selectedRun: null, // run id, null = show all
+    waitingCount: 0,   // tests waiting for a free worker (real queue)
   }),
 
   getters: {
     busyWorkers: (s) => s.workers.filter((w) => w.status === 'busy').length,
     idleWorkers: (s) => s.workers.filter((w) => w.status !== 'busy').length,
+    activeRuns: (s) => s.runs.filter((r) => r.status === 'running').length,
 
     filteredLogs: (s) => {
       if (!s.selectedRun) return s.logs
@@ -100,6 +102,10 @@ export const useStore = defineStore('main', {
             run.endTime = worker.lastHeartbeat
           }
         }
+      })
+
+      socket.on('queue:length', (count) => {
+        this.waitingCount = count
       })
 
       socket.on('worker:log', ({ workerId, message, timestamp }) => {

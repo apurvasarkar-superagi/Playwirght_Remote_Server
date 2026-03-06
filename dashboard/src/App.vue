@@ -130,6 +130,13 @@ const sidebarOpen = ref(true)
                 </div>
                 <span class="font-mono font-semibold text-green-400">{{ store.idleWorkers }}</span>
               </div>
+              <div class="flex items-center justify-between text-sm">
+                <div class="flex items-center gap-2">
+                  <span class="w-2.5 h-2.5 rounded-sm bg-yellow-500/40 border border-yellow-600 shrink-0"></span>
+                  <span class="text-slate-400">In Queue</span>
+                </div>
+                <span class="font-mono font-semibold text-yellow-400">{{ store.waitingCount }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -149,7 +156,16 @@ const sidebarOpen = ref(true)
           <!-- Sidebar header -->
           <div class="px-4 py-3 border-b border-slate-700 shrink-0 flex items-center justify-between">
             <span class="text-xs font-semibold uppercase tracking-wider text-slate-400">Tests</span>
-            <span class="text-xs font-mono text-slate-600">{{ store.runs.length }}</span>
+            <div class="flex items-center gap-2">
+              <span
+                v-if="store.waitingCount"
+                class="flex items-center gap-1 text-xs bg-yellow-900/60 text-yellow-300 px-2 py-0.5 rounded-full font-mono"
+              >
+                <span class="w-1.5 h-1.5 rounded-full bg-yellow-400 animate-pulse"></span>
+                {{ store.waitingCount }} queued
+              </span>
+              <span class="text-xs font-mono text-slate-600">{{ store.runs.length }}</span>
+            </div>
           </div>
 
           <!-- Per-run rows -->
