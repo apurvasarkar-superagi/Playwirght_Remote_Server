@@ -3,6 +3,9 @@ import cors from '@fastify/cors'
 import { Server } from 'socket.io'
 import IORedis from 'ioredis'
 
+import { initDb } from './db.js'
+import { recoverActiveRuns, startRun, finishRun, appendCommand, appendLog, listRuns, getRun } from './runs.js'
+
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 
 const fastify = Fastify({ logger: false })
@@ -14,6 +17,10 @@ const io = new Server(fastify.server, { cors: { origin: '*' } })
 // Redis clients — separate connections needed for pub/sub
 const redis = new IORedis(REDIS_URL, { maxRetriesPerRequest: null })
 const subscriber = new IORedis(REDIS_URL, { maxRetriesPerRequest: null })
+
+// Initialise PostgreSQL schema then recover any active runs from the last process
+await initDb()
+await recoverActiveRuns(redis)
 
 // ─── Queue tracking ──────────────────────────────────────────────────────────
 
@@ -72,18 +79,57 @@ fastify.post('/api/acquire-worker', async (request, reply) => {
   }
 })
 
+// ─── Run history endpoints ───────────────────────────────────────────────────
+
+fastify.get('/api/runs', async (request) => {
+  const limit = Math.min(parseInt(request.query.limit) || 50, 200)
+  const offset = parseInt(request.query.offset) || 0
+  const status = request.query.status || undefined
+  return listRuns({ limit, offset, status })
+})
+
+fastify.get('/api/runs/:runId', async (request, reply) => {
+  const run = await getRun(request.params.runId)
+  if (!run) return reply.status(404).send({ error: 'Run not found' })
+  return run
+})
+
 // ─── Worker status + logs via Redis pub/sub ──────────────────────────────────
 
 await subscriber.subscribe('worker:status', 'worker:log', 'worker:command')
 
 subscriber.on('message', (channel, raw) => {
   const data = JSON.parse(raw)
+
   if (channel === 'worker:status') {
     io.emit('worker:status', data)
+    if (data.status === 'busy') {
+      startRun(data.id, data.scenarioName).then((runId) => {
+        io.emit('run:started', {
+          runId,
+          workerId: data.id,
+          scenarioName: data.scenarioName || null,
+          startTime: data.lastHeartbeat,
+        })
+      }).catch((e) => console.error('[runs] startRun error:', e.message))
+    } else if (data.status === 'idle') {
+      finishRun(data.id, 'completed').catch((e) =>
+        console.error('[runs] finishRun error:', e.message),
+      )
+    }
   } else if (channel === 'worker:log') {
     io.emit('worker:log', data)
+    appendLog(data.workerId, data.message, data.timestamp)
+      .catch((e) => console.error('[runs] appendLog error:', e.message))
   } else if (channel === 'worker:command') {
     io.emit('worker:command', data)
+    appendCommand(data.workerId, {
+      method: data.method,
+      label: data.label,
+      param: data.param,
+      timestamp: data.timestamp,
+      error: data.error || null,
+    }).catch((e) => console.error('[runs] appendCommand error:', e.message))
   }
 })
 

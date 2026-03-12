@@ -44,7 +44,15 @@ function onCmdScroll() {
 }
 
 // ── Formatting helpers ────────────────────────────────────────────────────────
-const fmt = (ts) => new Date(ts).toISOString().slice(11, 23)
+const fmt = (ts) => {
+  try {
+    const d = new Date(Number(ts))
+    if (isNaN(d.getTime())) return '--:--:--.---'
+    return d.toISOString().slice(11, 23)
+  } catch {
+    return '--:--:--.---'
+  }
+}
 const shortId = (id) => id.slice(-6)
 
 const workerColor = (() => {
@@ -149,7 +157,7 @@ function cmdBadgeColor(label) {
         <span :class="['shrink-0 select-none', workerColor(line.workerId)]">[{{ shortId(line.workerId) }}]</span>
         <span class="text-slate-300 break-all">{{ line.message }}</span>
       </div>
-      <div v-if="!store.filteredLogs.length" class="text-slate-600 italic">
+      <div v-if="!store.filteredLogs.length" class="text-slate-400 italic">
         Waiting for logs... Run your tests to see activity here.
       </div>
     </div>
@@ -162,7 +170,7 @@ function cmdBadgeColor(label) {
       @scroll="onCmdScroll"
     >
       <!-- Empty state -->
-      <div v-if="!store.filteredCommands.length" class="p-4 text-slate-600 italic text-sm">
+      <div v-if="!store.filteredCommands.length" class="p-4 text-slate-400 italic text-sm">
         No commands recorded yet. Run your tests to see steps here.
       </div>
 

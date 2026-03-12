@@ -266,6 +266,9 @@ async def handle_connection(client_ws):
         print(f"[proxy] error: {e}", flush=True)
     finally:
         set_scenario(None)
+        # Register idle here — after all proxy tasks have finished — so the error
+        # command is guaranteed to be in Redis before the idle status fires.
+        register("idle")
 
 
 async def run_proxy() -> None:
@@ -303,8 +306,6 @@ def stream_logs() -> None:
         if "pw:server" in line:
             if "Connected client" in line:
                 register("busy")
-            elif "disconnected" in line:
-                register("idle")
 
 
 threading.Thread(target=stream_logs, daemon=True).start()

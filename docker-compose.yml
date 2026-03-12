@@ -8,13 +8,31 @@ services:
       timeout: 3s
       retries: 5
 
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=playwright
+      - POSTGRES_PASSWORD=playwright
+      - POSTGRES_DB=playwright_runs
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U playwright -d playwright_runs"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   api-manager:
     build: ./api-manager
     environment:
       - REDIS_URL=redis://redis:6379
       - PORT=3000
+      - DATABASE_URL=postgres://playwright:playwright@postgres:5432/playwright_runs
     depends_on:
       redis:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     restart: unless-stopped
 
@@ -53,3 +71,6 @@ services:
     depends_on:
       - gateway
     restart: unless-stopped
+
+volumes:
+  postgres_data:
