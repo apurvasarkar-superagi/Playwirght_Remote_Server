@@ -4,7 +4,8 @@ import { Server } from 'socket.io'
 import IORedis from 'ioredis'
 
 import { initDb } from './db.js'
-import { recoverActiveRuns, startRun, finishRun, appendCommand, appendLog, listRuns, getRun } from './runs.js'
+import fastifyStatic from '@fastify/static'
+import { recoverActiveRuns, startRun, finishRun, appendCommand, appendLog, appendScreenshot, listRuns, getRun, getScreenshots } from './runs.js'
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 
@@ -17,6 +18,13 @@ const io = new Server(fastify.server, { cors: { origin: '*' } })
 // Redis clients — separate connections needed for pub/sub
 const redis = new IORedis(REDIS_URL, { maxRetriesPerRequest: null })
 const subscriber = new IORedis(REDIS_URL, { maxRetriesPerRequest: null })
+
+// Serve screenshot files from shared volume
+await fastify.register(fastifyStatic, {
+  root: '/data/screenshots',
+  prefix: '/screenshots/',
+  decorateReply: false,
+})
 
 // Initialise PostgreSQL schema then recover any active runs from the last process
 await initDb()
@@ -94,9 +102,15 @@ fastify.get('/api/runs/:runId', async (request, reply) => {
   return run
 })
 
+fastify.get('/api/runs/:runId/screenshots', async (request, reply) => {
+  const screenshots = await getScreenshots(request.params.runId)
+  if (!screenshots) return reply.status(404).send({ error: 'Run not found' })
+  return screenshots
+})
+
 // ─── Worker status + logs via Redis pub/sub ──────────────────────────────────
 
-await subscriber.subscribe('worker:status', 'worker:log', 'worker:command')
+await subscriber.subscribe('worker:status', 'worker:log', 'worker:command', 'worker:screenshot')
 
 subscriber.on('message', (channel, raw) => {
   const data = JSON.parse(raw)
@@ -130,6 +144,15 @@ subscriber.on('message', (channel, raw) => {
       timestamp: data.timestamp,
       error: data.error || null,
     }).catch((e) => console.error('[runs] appendCommand error:', e.message))
+  } else if (channel === 'worker:screenshot') {
+    io.emit('screenshot:captured', data)
+    appendScreenshot(data.workerId, {
+      filename: data.filename,
+      command: data.command,
+      param: data.param,
+      error: data.error,
+      timestamp: data.timestamp,
+    }).catch((e) => console.error('[runs] appendScreenshot error:', e.message))
   }
 })
 

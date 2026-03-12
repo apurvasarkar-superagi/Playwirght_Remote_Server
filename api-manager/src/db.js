@@ -40,8 +40,21 @@ export async function initDb() {
     )
   `)
 
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_run_commands_run_id ON run_commands(run_id)`)
-  await pool.query(`CREATE INDEX IF NOT EXISTS idx_run_logs_run_id    ON run_logs(run_id)`)
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS run_screenshots (
+      id          SERIAL PRIMARY KEY,
+      run_id      UUID NOT NULL REFERENCES runs(run_id) ON DELETE CASCADE,
+      filename    TEXT NOT NULL,
+      command     TEXT,
+      param       TEXT,
+      error       TEXT,
+      ts          BIGINT NOT NULL
+    )
+  `)
+
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_run_commands_run_id    ON run_commands(run_id)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_run_logs_run_id        ON run_logs(run_id)`)
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_run_screenshots_run_id ON run_screenshots(run_id)`)
 
   console.log('[db] schema ready')
 }

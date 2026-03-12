@@ -6,11 +6,15 @@ RUN apt-get update && apt-get install -y \
     libcups2 libdrm2 libxcb1 libxkbcommon0 libx11-6 libxcomposite1 libxdamage1 \
     libxext6 libxfixes3 libxrandr2 libgbm1 libpango-1.0-0 libcairo2 libasound2 \
     libatspi2.0-0 \
+    xvfb x11vnc novnc websockify imagemagick x11-utils xdotool \
     && rm -rf /var/lib/apt/lists/*
 
 RUN pip install playwright==1.57.0 redis "websockets>=10,<13"
 RUN playwright install chromium
 
 COPY src/server.py /app/server.py
-EXPOSE 9222
+COPY src/vnc_embed.html /usr/share/novnc/vnc_embed.html
+RUN mkdir -p /data/screenshots
+
+EXPOSE 9222 6080
 CMD ["python", "/app/server.py"]

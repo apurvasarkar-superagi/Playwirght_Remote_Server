@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html style="margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000">
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:#000">
+<div id="vnc" style="width:100%;height:100%"></div>
+<div id="s" style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#64748b;font:13px system-ui;z-index:10">Connecting...</div>
+<script type="module">
+import RFB from './core/rfb.js';
+const p = new URLSearchParams(location.search);
+const url = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/${p.get('path') || ''}`;
+const el = document.getElementById('vnc');
+const st = document.getElementById('s');
+
+function go() {
+  while (el.firstChild) el.removeChild(el.firstChild);
+  st.textContent = 'Connecting...';
+  st.style.display = '';
+  const r = new RFB(el, url);
+  r.scaleViewport = true;
+  r.clipViewport = true;
+  r.resizeSession = true;
+  r.viewOnly = p.get('view_only') === 'true';
+  r.background = '#000';
+  r.showDotCursor = false;
+  r.addEventListener('connect', () => { st.style.display = 'none'; });
+  r.addEventListener('disconnect', () => {
+    st.textContent = 'Reconnecting...';
+    st.style.display = '';
+    setTimeout(go, 2000);
+  });
+}
+go();
+</script>
+</body>
+</html>

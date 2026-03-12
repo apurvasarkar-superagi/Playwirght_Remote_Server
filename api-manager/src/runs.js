@@ -151,8 +151,28 @@ export async function listRuns({ limit = 50, offset = 0, status } = {}) {
   return rows
 }
 
+export async function appendScreenshot(workerId, { filename, command, param, error, timestamp }) {
+  const runId = await resolveRunId(workerId)
+  if (!runId) return null
+  await pool.query(
+    `INSERT INTO run_screenshots (run_id, filename, command, param, error, ts)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
+    [runId, filename, command || null, param || null, error || null, timestamp],
+  )
+  return runId
+}
+
+export async function getScreenshots(runId) {
+  const { rows } = await pool.query(
+    `SELECT filename, command, param, error, ts::float8 AS timestamp
+     FROM run_screenshots WHERE run_id = $1 ORDER BY id`,
+    [runId],
+  )
+  return rows
+}
+
 export async function getRun(runId) {
-  const [runRes, cmdsRes, logsRes] = await Promise.all([
+  const [runRes, cmdsRes, logsRes, screenshotsRes] = await Promise.all([
     pool.query(`SELECT * FROM runs WHERE run_id = $1`, [runId]),
     pool.query(
       `SELECT method, label, param, error, ts::float8 AS timestamp
@@ -164,11 +184,17 @@ export async function getRun(runId) {
        FROM run_logs WHERE run_id = $1 ORDER BY id`,
       [runId],
     ),
+    pool.query(
+      `SELECT filename, command, param, error, ts::float8 AS timestamp
+       FROM run_screenshots WHERE run_id = $1 ORDER BY id`,
+      [runId],
+    ),
   ])
   if (!runRes.rows.length) return null
   return {
     ...runRes.rows[0],
     commands: cmdsRes.rows,
     logs: logsRes.rows,
+    screenshots: screenshotsRes.rows,
   }
 }

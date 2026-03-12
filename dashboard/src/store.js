@@ -4,6 +4,7 @@ import { socket } from './socket.js'
 const MAX_LOGS = 500
 const MAX_COMMANDS = 500
 const MAX_RUNS = 100
+const MAX_SCREENSHOTS = 200
 
 export const useStore = defineStore('main', {
   state: () => ({
@@ -15,6 +16,7 @@ export const useStore = defineStore('main', {
     selectedRun: null,  // UUID of the selected run, null = show all live
     runDetail: null,    // { commands[], logs[] } fetched from DB for the selected run
     waitingCount: 0,
+    screenshots: [],  // live ring-buffer [{ workerId, filename, command, param, error, timestamp }]
     // workerId → true: error arrived before run:started — applied when run is registered
     pendingErrors: {},
   }),
@@ -27,15 +29,36 @@ export const useStore = defineStore('main', {
     // When a run is selected, show its DB-fetched detail (commands/logs).
     // runDetail is always fetched from DB — even for live runs (shows history
     // before the page loaded, then new events are appended in real-time).
-    // When nothing is selected, show the live ring-buffer.
+    // Only show data for the selected run — don't mix all workers together
     filteredLogs: (s) => {
-      if (!s.selectedRun) return s.logs
+      if (!s.selectedRun) return []
       return s.runDetail ? s.runDetail.logs : []
     },
 
     filteredCommands: (s) => {
-      if (!s.selectedRun) return s.commands
+      if (!s.selectedRun) return []
       return s.runDetail ? s.runDetail.commands : []
+    },
+
+    filteredScreenshots: (s) => {
+      if (!s.selectedRun) return []
+      return s.runDetail ? (s.runDetail.screenshots || []) : []
+    },
+
+    // Get the stream URL for the selected run's worker (only if running)
+    activeStreamUrl: (s) => {
+      if (!s.selectedRun) return null
+      const run = s.runs.find((r) => r.id === s.selectedRun)
+      if (!run || run.status !== 'running') return null
+      const worker = s.workers.find((w) => w.id === run.workerId)
+      return worker?.streamUrl || null
+    },
+
+    // Get stream URLs for all busy workers (used when no run is selected)
+    busyWorkerStreams: (s) => {
+      return s.workers
+        .filter((w) => w.status === 'busy' && w.streamUrl)
+        .map((w) => ({ workerId: w.id, streamUrl: w.streamUrl, scenarioName: w.scenarioName }))
     },
   },
 
@@ -139,6 +162,21 @@ export const useStore = defineStore('main', {
         }
       })
 
+      socket.on('screenshot:captured', (data) => {
+        this.screenshots.push(data)
+        if (this.screenshots.length > MAX_SCREENSHOTS)
+          this.screenshots.splice(0, this.screenshots.length - MAX_SCREENSHOTS)
+
+        // Append to selected run detail in real-time
+        if (this.runDetail && this.selectedRun) {
+          const run = this.runs.find((r) => r.id === this.selectedRun)
+          if (run && run.workerId === data.workerId) {
+            if (!this.runDetail.screenshots) this.runDetail.screenshots = []
+            this.runDetail.screenshots.push(data)
+          }
+        }
+      })
+
       socket.on('worker:command', ({ workerId, method, label, param, error, timestamp }) => {
         const entry = { workerId, method, label, param, error, timestamp }
 
@@ -189,6 +227,7 @@ export const useStore = defineStore('main', {
           this.runDetail = {
             commands: (data.commands || []).map((c) => ({ ...c, workerId: data.worker_id, timestamp: Number(c.timestamp) })),
             logs: (data.logs || []).map((l) => ({ ...l, workerId: data.worker_id, timestamp: Number(l.timestamp) })),
+            screenshots: (data.screenshots || []).map((s) => ({ ...s, workerId: data.worker_id, timestamp: Number(s.timestamp) })),
           }
         }
       } catch (e) {
