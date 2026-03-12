@@ -7,16 +7,6 @@ const screenshotModal = ref(null)
 
 const shortId = (id) => id?.slice(-6) || ''
 
-const fmt = (ts) => {
-  try {
-    const d = new Date(Number(ts))
-    if (isNaN(d.getTime())) return '--:--:--.---'
-    return d.toISOString().slice(11, 23)
-  } catch {
-    return '--:--:--.---'
-  }
-}
-
 // Only show stream for the selected run — don't mix all workers together
 const streams = computed(() => {
   if (!store.selectedRun) return []
@@ -40,15 +30,24 @@ function vncViewerUrl(streamUrl) {
   return `${proto}//${host}${streamUrl}/vnc_embed.html?view_only=true&reconnect_delay=2000&path=${wsPath}`
 }
 
+// Recorded video for completed runs
+const videoUrl = computed(() => store.selectedVideoUrl)
+
+// Show video when run is finished (not running) and has a recording
+const showVideo = computed(() => {
+  if (!store.selectedRun) return false
+  const run = store.runs.find((r) => r.id === store.selectedRun)
+  return run && run.status !== 'running' && videoUrl.value
+})
+
 const screenshots = computed(() => store.filteredScreenshots)
 </script>
 
 <template>
   <div class="h-full flex flex-col bg-black">
 
-    <!-- Live stream area -->
+    <!-- Live stream area (only for running tests) -->
     <div v-if="streams.length" class="flex-1 relative min-h-0">
-      <!-- Single stream: fill entire area -->
       <div v-if="streams.length === 1" class="h-full relative">
         <div class="absolute top-2 left-2 z-10 flex items-center gap-1.5 bg-black/60 backdrop-blur px-2 py-1 rounded text-xs">
           <span class="w-1.5 h-1.5 rounded-full bg-red-500 animate-pulse"></span>
@@ -62,7 +61,6 @@ const screenshots = computed(() => store.filteredScreenshots)
         ></iframe>
       </div>
 
-      <!-- Multiple streams: grid -->
       <div v-else class="h-full p-2 flex flex-wrap gap-2 min-h-0">
         <div
           v-for="stream in streams"
@@ -82,7 +80,20 @@ const screenshots = computed(() => store.filteredScreenshots)
       </div>
     </div>
 
-    <!-- No streams placeholder -->
+    <!-- Recorded video playback (for completed runs) -->
+    <div v-else-if="showVideo" class="flex-1 relative min-h-0 flex items-center justify-center">
+      <video
+        :key="videoUrl"
+        :src="videoUrl"
+        controls
+        class="max-w-full max-h-full rounded"
+        style="background: #000;"
+      >
+        Your browser does not support the video tag.
+      </video>
+    </div>
+
+    <!-- No streams / no video placeholder -->
     <div v-else-if="!screenshots.length" class="flex-1 flex items-center justify-center">
       <div class="text-center text-slate-600">
         <svg class="w-12 h-12 mx-auto mb-3 opacity-30" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -91,6 +102,7 @@ const screenshots = computed(() => store.filteredScreenshots)
         </svg>
         <p class="text-sm">No active streams</p>
         <p class="text-xs mt-1">Live browser feeds appear here when workers are running tests</p>
+        <p v-if="store.selectedRun" class="text-xs mt-1">Video recording will be available after the test completes</p>
       </div>
     </div>
 

@@ -5,7 +5,7 @@ import IORedis from 'ioredis'
 
 import { initDb } from './db.js'
 import fastifyStatic from '@fastify/static'
-import { recoverActiveRuns, startRun, finishRun, appendCommand, appendLog, appendScreenshot, listRuns, getRun, getScreenshots } from './runs.js'
+import { recoverActiveRuns, startRun, finishRun, appendCommand, appendLog, appendScreenshot, setVideoFilename, listRuns, getRun, getScreenshots } from './runs.js'
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 
@@ -23,6 +23,13 @@ const subscriber = new IORedis(REDIS_URL, { maxRetriesPerRequest: null })
 await fastify.register(fastifyStatic, {
   root: '/data/screenshots',
   prefix: '/screenshots/',
+  decorateReply: false,
+})
+
+// Serve video recordings from shared volume
+await fastify.register(fastifyStatic, {
+  root: '/data/videos',
+  prefix: '/videos/',
   decorateReply: false,
 })
 
@@ -110,7 +117,7 @@ fastify.get('/api/runs/:runId/screenshots', async (request, reply) => {
 
 // ─── Worker status + logs via Redis pub/sub ──────────────────────────────────
 
-await subscriber.subscribe('worker:status', 'worker:log', 'worker:command', 'worker:screenshot')
+await subscriber.subscribe('worker:status', 'worker:log', 'worker:command', 'worker:screenshot', 'worker:video')
 
 subscriber.on('message', (channel, raw) => {
   const data = JSON.parse(raw)
@@ -153,6 +160,9 @@ subscriber.on('message', (channel, raw) => {
       error: data.error,
       timestamp: data.timestamp,
     }).catch((e) => console.error('[runs] appendScreenshot error:', e.message))
+  } else if (channel === 'worker:video') {
+    setVideoFilename(data.workerId, data.filename)
+      .catch((e) => console.error('[runs] setVideoFilename error:', e.message))
   }
 })
 

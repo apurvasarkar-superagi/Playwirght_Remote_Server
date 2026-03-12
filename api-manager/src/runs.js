@@ -104,6 +104,16 @@ async function resolveRunId(workerId) {
   return activeRuns.get(workerId) ?? null
 }
 
+export async function setVideoFilename(workerId, filename) {
+  const runId = await resolveRunId(workerId)
+  if (!runId) return
+  await pool.query(
+    `UPDATE runs SET video_filename = $1 WHERE run_id = $2`,
+    [filename, runId],
+  )
+  console.log(`[runs] video saved for run ${runId}: ${filename}`)
+}
+
 export async function appendCommand(workerId, cmd) {
   const runId = await resolveRunId(workerId)
   if (!runId) return
@@ -138,7 +148,7 @@ export async function listRuns({ limit = 50, offset = 0, status } = {}) {
 
   const { rows } = await pool.query(
     `SELECT r.id, r.run_id, r.worker_id, r.scenario, r.status,
-            r.started_at, r.finished_at,
+            r.started_at, r.finished_at, r.video_filename,
             COUNT(rc.id)::int AS command_count
      FROM runs r
      LEFT JOIN run_commands rc ON rc.run_id = r.run_id

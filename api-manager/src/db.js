@@ -15,7 +15,8 @@ export async function initDb() {
       scenario    TEXT,
       status      TEXT NOT NULL DEFAULT 'running',
       started_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-      finished_at TIMESTAMPTZ
+      finished_at TIMESTAMPTZ,
+      video_filename TEXT
     )
   `)
 
@@ -50,6 +51,14 @@ export async function initDb() {
       error       TEXT,
       ts          BIGINT NOT NULL
     )
+  `)
+
+  // Migration: add video_filename column if missing (table may already exist)
+  await pool.query(`
+    DO $$ BEGIN
+      ALTER TABLE runs ADD COLUMN IF NOT EXISTS video_filename TEXT;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END $$
   `)
 
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_run_commands_run_id    ON run_commands(run_id)`)

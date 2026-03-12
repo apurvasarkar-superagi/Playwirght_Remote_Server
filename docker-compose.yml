@@ -31,6 +31,7 @@ services:
       - DATABASE_URL=postgres://playwright:playwright@postgres:5432/playwright_runs
     volumes:
       - screenshots:/data/screenshots
+      - videos:/data/videos
     depends_on:
       redis:
         condition: service_healthy
@@ -47,6 +48,7 @@ services:
       - STREAM_PORT=6080
     volumes:
       - screenshots:/data/screenshots
+      - videos:/data/videos
     depends_on:
       redis:
         condition: service_healthy
@@ -81,3 +83,4 @@ services:
 volumes:
   postgres_data:
   screenshots:
+  videos:

@@ -36,6 +36,7 @@ SERVER_PORT = 9223
 STREAM_PORT = int(os.environ.get("STREAM_PORT", "6080"))
 DISPLAY = os.environ.get("DISPLAY", ":99")
 SCREENSHOT_DIR = "/data/screenshots"
+VIDEO_DIR = "/data/videos"
 SCREEN_WIDTH = int(os.environ.get("SCREEN_WIDTH", "1920"))
 SCREEN_HEIGHT = int(os.environ.get("SCREEN_HEIGHT", "1080"))
 
@@ -242,6 +243,87 @@ def capture_screenshot(cmd: dict, error_msg: str) -> None:
         print(f"[screenshot] captured {filename} for error: {error_msg[:80]}", flush=True)
     except Exception as e:
         print(f"[screenshot] capture failed: {e}", flush=True)
+
+
+# ── Video recording ──────────────────────────────────────────────────────────
+
+_recording_proc = None   # ffmpeg subprocess
+_recording_file = None   # current video filename (without path)
+
+
+def start_recording():
+    """Start ffmpeg recording of the Xvfb display."""
+    global _recording_proc, _recording_file
+
+    stop_recording()  # ensure no stale process
+
+    ts = int(time.time() * 1000)
+    _recording_file = f"{WORKER_ID}_{ts}.mp4"
+    filepath = os.path.join(VIDEO_DIR, _recording_file)
+
+    try:
+        _recording_proc = subprocess.Popen(
+            [
+                "ffmpeg",
+                "-f", "x11grab",
+                "-video_size", f"{SCREEN_WIDTH}x{SCREEN_HEIGHT}",
+                "-framerate", "15",
+                "-i", DISPLAY,
+                "-c:v", "libx264",
+                "-preset", "ultrafast",
+                "-crf", "30",
+                "-pix_fmt", "yuv420p",
+                "-movflags", "+faststart",
+                "-y",
+                filepath,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        print(f"[video] recording started → {_recording_file} (pid {_recording_proc.pid})", flush=True)
+    except Exception as e:
+        print(f"[video] failed to start recording: {e}", flush=True)
+        _recording_proc = None
+        _recording_file = None
+
+
+def stop_recording():
+    """Stop ffmpeg recording and publish the video filename to Redis."""
+    global _recording_proc, _recording_file
+
+    if _recording_proc is None:
+        return None
+
+    filename = _recording_file
+    proc = _recording_proc
+    _recording_proc = None
+    _recording_file = None
+
+    try:
+        # Send 'q' to ffmpeg stdin for graceful stop (finalizes mp4)
+        proc.terminate()
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+    except Exception:
+        try:
+            proc.kill()
+        except Exception:
+            pass
+
+    filepath = os.path.join(VIDEO_DIR, filename) if filename else None
+    if filepath and os.path.exists(filepath) and os.path.getsize(filepath) > 0:
+        print(f"[video] recording stopped → {filename} ({os.path.getsize(filepath)} bytes)", flush=True)
+        r.publish("worker:video", json.dumps({
+            "workerId": WORKER_ID,
+            "filename": filename,
+            "timestamp": int(time.time() * 1000),
+        }))
+        return filename
+    else:
+        print(f"[video] recording stopped but file is empty or missing", flush=True)
+        return None
 
 
 # ── Redis helpers ─────────────────────────────────────────────────────────────
@@ -548,6 +630,10 @@ async def handle_connection(client_ws):
     else:
         print(f"[proxy] respecting headless mode — skipping headed injection", flush=True)
 
+    # Start video recording (skip for headless runs — no display content)
+    if not _client_wants_headless:
+        start_recording()
+
     # Log first connection for debugging
     log_methods = _first_connection
     _first_connection = False
@@ -631,6 +717,8 @@ async def handle_connection(client_ws):
     except Exception as e:
         print(f"[proxy] error: {e}", flush=True)
     finally:
+        # Stop video recording before going idle so the video is finalized
+        stop_recording()
         set_scenario(None)
         # Register idle here — after all proxy tasks have finished — so the error
         # command is guaranteed to be in Redis before the idle status fires.

@@ -60,6 +60,16 @@ export const useStore = defineStore('main', {
         .filter((w) => w.status === 'busy' && w.streamUrl)
         .map((w) => ({ workerId: w.id, streamUrl: w.streamUrl, scenarioName: w.scenarioName }))
     },
+
+    // Get the video URL for the selected run (from DB detail or run list)
+    selectedVideoUrl: (s) => {
+      if (!s.selectedRun) return null
+      // Prefer runDetail (freshly fetched from DB)
+      if (s.runDetail?.videoUrl) return s.runDetail.videoUrl
+      // Fall back to the run list entry
+      const run = s.runs.find((r) => r.id === s.selectedRun)
+      return run?.videoUrl || null
+    },
   },
 
   actions: {
@@ -84,6 +94,7 @@ export const useStore = defineStore('main', {
             startTime: new Date(r.started_at).getTime(),
             endTime: r.finished_at ? new Date(r.finished_at).getTime() : null,
             hasError: r.status === 'failed',
+            videoUrl: r.video_filename ? `/videos/${r.video_filename}` : null,
           }))
         }
       } catch (e) {
@@ -228,6 +239,12 @@ export const useStore = defineStore('main', {
             commands: (data.commands || []).map((c) => ({ ...c, workerId: data.worker_id, timestamp: Number(c.timestamp) })),
             logs: (data.logs || []).map((l) => ({ ...l, workerId: data.worker_id, timestamp: Number(l.timestamp) })),
             screenshots: (data.screenshots || []).map((s) => ({ ...s, workerId: data.worker_id, timestamp: Number(s.timestamp) })),
+            videoUrl: data.video_filename ? `/videos/${data.video_filename}` : null,
+          }
+          // Also update the run entry in the list so the sidebar knows about the video
+          const run = this.runs.find((r) => r.id === newId)
+          if (run && data.video_filename) {
+            run.videoUrl = `/videos/${data.video_filename}`
           }
         }
       } catch (e) {
