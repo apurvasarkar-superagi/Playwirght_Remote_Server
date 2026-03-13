@@ -5,7 +5,7 @@ import IORedis from 'ioredis'
 
 import { initDb } from './db.js'
 import fastifyStatic from '@fastify/static'
-import { recoverActiveRuns, startRun, finishRun, appendCommand, appendLog, appendScreenshot, setVideoFilename, listRuns, getRun, getScreenshots } from './runs.js'
+import { recoverActiveRuns, registerBuild, startRun, finishRun, appendCommand, appendLog, appendScreenshot, setVideoFilename, listRuns, listBuilds, getBuildRuns, getRun, getScreenshots } from './runs.js'
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 
@@ -115,6 +115,27 @@ fastify.get('/api/runs/:runId/screenshots', async (request, reply) => {
   return screenshots
 })
 
+// Register a build name — called once per test session, returns the resolved name
+// (auto-numbered if the same base name was already used today)
+fastify.post('/api/builds/register', async (request, reply) => {
+  const baseName = request.body?.name
+  if (!baseName) return reply.status(400).send({ error: 'name is required' })
+  const resolvedName = await registerBuild(baseName)
+  return { name: resolvedName }
+})
+
+// Builds listing — runs ordered by date for the /builds dashboard page
+fastify.get('/api/builds', async (request) => {
+  const limit = Math.min(parseInt(request.query.limit) || 50, 200)
+  const offset = parseInt(request.query.offset) || 0
+  return listBuilds({ limit, offset })
+})
+
+// Get all runs for a specific build
+fastify.get('/api/builds/:buildName/runs', async (request) => {
+  return getBuildRuns(request.params.buildName)
+})
+
 // ─── Worker status + logs via Redis pub/sub ──────────────────────────────────
 
 await subscriber.subscribe('worker:status', 'worker:log', 'worker:command', 'worker:screenshot', 'worker:video')
@@ -125,11 +146,12 @@ subscriber.on('message', (channel, raw) => {
   if (channel === 'worker:status') {
     io.emit('worker:status', data)
     if (data.status === 'busy') {
-      startRun(data.id, data.scenarioName).then((runId) => {
+      startRun(data.id, data.scenarioName, data.buildName).then((runId) => {
         io.emit('run:started', {
           runId,
           workerId: data.id,
           scenarioName: data.scenarioName || null,
+          buildName: data.buildName || null,
           startTime: data.lastHeartbeat,
         })
       }).catch((e) => console.error('[runs] startRun error:', e.message))

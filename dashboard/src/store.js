@@ -9,12 +9,14 @@ const MAX_SCREENSHOTS = 200
 export const useStore = defineStore('main', {
   state: () => ({
     connected: false,
+    initialized: false,
     workers: [],
     logs: [],      // live ring-buffer [{ workerId, message, timestamp }]
     commands: [],  // live ring-buffer [{ workerId, method, label, param, error, timestamp }]
-    runs: [],      // [{ id (UUID), scenarioName, workerId, status, startTime, endTime, hasError }]
+    runs: [],      // [{ id (UUID), scenarioName, buildName, workerId, status, startTime, endTime, hasError }]
     selectedRun: null,  // UUID of the selected run, null = show all live
     runDetail: null,    // { commands[], logs[] } fetched from DB for the selected run
+    activeBuild: null,  // build_name filter — when set, sidebar only shows runs from this build
     waitingCount: 0,
     screenshots: [],  // live ring-buffer [{ workerId, filename, command, param, error, timestamp }]
     // workerId → true: error arrived before run:started — applied when run is registered
@@ -25,6 +27,12 @@ export const useStore = defineStore('main', {
     busyWorkers: (s) => s.workers.filter((w) => w.status === 'busy').length,
     idleWorkers: (s) => s.workers.filter((w) => w.status !== 'busy').length,
     activeRuns:  (s) => s.runs.filter((r) => r.status === 'running').length,
+
+    // Sidebar runs — filtered by activeBuild when set
+    sidebarRuns: (s) => {
+      if (!s.activeBuild) return s.runs
+      return s.runs.filter((r) => r.buildName === s.activeBuild)
+    },
 
     // When a run is selected, show its DB-fetched detail (commands/logs).
     // runDetail is always fetched from DB — even for live runs (shows history
@@ -74,6 +82,9 @@ export const useStore = defineStore('main', {
 
   actions: {
     async init() {
+      if (this.initialized) return
+      this.initialized = true
+
       socket.on('connect', () => (this.connected = true))
       socket.on('disconnect', () => (this.connected = false))
 
@@ -89,12 +100,14 @@ export const useStore = defineStore('main', {
           this.runs = rows.map((r) => ({
             id: r.run_id,
             scenarioName: r.scenario || r.worker_id.slice(-8),
+            buildName: r.build_name || null,
             workerId: r.worker_id,
             status: r.status === 'completed' ? 'passed' : r.status,
             startTime: new Date(r.started_at).getTime(),
             endTime: r.finished_at ? new Date(r.finished_at).getTime() : null,
             hasError: r.status === 'failed',
             videoUrl: r.video_filename ? `/videos/${r.video_filename}` : null,
+            commandCount: r.command_count || 0,
           }))
         }
       } catch (e) {
@@ -136,7 +149,7 @@ export const useStore = defineStore('main', {
       // Single source of truth: run entries are ONLY created here, with the real DB UUID.
       // The backend guard ensures startRun returns the same UUID for a live worker,
       // so this event fires at most once per unique run UUID.
-      socket.on('run:started', ({ runId, workerId, scenarioName, startTime }) => {
+      socket.on('run:started', ({ runId, workerId, scenarioName, buildName, startTime }) => {
         // UUID already in list (loaded from DB on page refresh) — nothing to do
         if (this.runs.some((r) => r.id === runId)) return
 
@@ -146,6 +159,7 @@ export const useStore = defineStore('main', {
         this.runs.unshift({
           id: runId,
           scenarioName: scenarioName || workerId.slice(-8),
+          buildName: buildName || null,
           workerId,
           status: 'running',
           startTime: startTime || Date.now(),
@@ -217,6 +231,36 @@ export const useStore = defineStore('main', {
           }
         }
       })
+    },
+
+    async loadBuildRuns(buildName) {
+      this.activeBuild = buildName || null
+      if (!buildName) return
+      try {
+        const res = await fetch(`/api/builds/${encodeURIComponent(buildName)}/runs`)
+        if (res.ok) {
+          const rows = await res.json()
+          // Merge build runs into store.runs (avoid duplicates)
+          const existingIds = new Set(this.runs.map((r) => r.id))
+          const newRuns = rows
+            .filter((r) => !existingIds.has(r.run_id))
+            .map((r) => ({
+              id: r.run_id,
+              scenarioName: r.scenario || r.worker_id.slice(-8),
+              buildName: r.build_name || null,
+              workerId: r.worker_id,
+              status: r.status === 'completed' ? 'passed' : r.status,
+              startTime: new Date(r.started_at).getTime(),
+              endTime: r.finished_at ? new Date(r.finished_at).getTime() : null,
+              hasError: r.status === 'failed',
+              videoUrl: r.video_filename ? `/videos/${r.video_filename}` : null,
+              commandCount: r.command_count || 0,
+            }))
+          if (newRuns.length) this.runs.unshift(...newRuns)
+        }
+      } catch (e) {
+        console.warn('[store] could not load build runs:', e)
+      }
     },
 
     async selectRun(runId) {

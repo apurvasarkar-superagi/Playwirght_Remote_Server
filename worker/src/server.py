@@ -43,6 +43,7 @@ SCREEN_HEIGHT = int(os.environ.get("SCREEN_HEIGHT", "1080"))
 r = redis.from_url(REDIS_URL, decode_responses=True)
 _status = "idle"
 _scenario = None  # current scenario name (set per-connection)
+_build_name = None  # build identifier (set per-connection)
 
 # Playwright wire protocol method names → (human label, primary param key).
 # The wire protocol uses short names (e.g. "goto", "click") not qualified names.
@@ -333,6 +334,11 @@ def set_scenario(name: str | None) -> None:
     _scenario = name
 
 
+def set_build_name(name: str | None) -> None:
+    global _build_name
+    _build_name = name
+
+
 def register(status: str) -> None:
     global _status
     _status = status
@@ -345,6 +351,8 @@ def register(status: str) -> None:
     }
     if _scenario:
         payload["scenarioName"] = _scenario
+    if _build_name:
+        payload["buildName"] = _build_name
     data = json.dumps(payload)
     r.setex(f"worker:{WORKER_ID}", 30, data)
     r.publish("worker:status", data)
@@ -558,8 +566,18 @@ async def handle_connection(client_ws):
     if not scenario:
         qs = parse_qs(urlparse(path).query)
         scenario = qs.get("scenario", [None])[0]
-    print(f"[proxy] new connection path={path!r} scenario={scenario!r}", flush=True)
+    # Extract build identifier — prefer X-Build-Identifier header, fall back to ?build_identifier=
+    build_name = None
+    if hasattr(client_ws, 'request_headers'):
+        build_name = client_ws.request_headers.get('x-build-identifier') or \
+                     client_ws.request_headers.get('X-Build-Identifier')
+    if not build_name:
+        qs_build = parse_qs(urlparse(path).query)
+        build_name = qs_build.get("build_identifier", [None])[0]
+
+    print(f"[proxy] new connection path={path!r} scenario={scenario!r} build={build_name!r}", flush=True)
     set_scenario(scenario)
+    set_build_name(build_name)
     # Register busy immediately so scenarioName is in Redis before stream_logs fires
     register("busy")
 
@@ -572,7 +590,7 @@ async def handle_connection(client_ws):
     # Skip x-scenario-name — it's only for our proxy, not for playwright.
     _skip = {'host', 'connection', 'upgrade', 'sec-websocket-key',
              'sec-websocket-version', 'sec-websocket-extensions', 'sec-websocket-accept',
-             'x-scenario-name'}
+             'x-scenario-name', 'x-build-identifier'}
     extra_headers = {}
     if hasattr(client_ws, 'request_headers'):
         extra_headers = {k: v for k, v in client_ws.request_headers.items()
@@ -720,6 +738,7 @@ async def handle_connection(client_ws):
         # Stop video recording before going idle so the video is finalized
         stop_recording()
         set_scenario(None)
+        set_build_name(None)
         # Register idle here — after all proxy tasks have finished — so the error
         # command is guaranteed to be in Redis before the idle status fires.
         register("idle")

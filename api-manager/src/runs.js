@@ -45,7 +45,27 @@ export async function recoverActiveRuns(redis) {
   }
 }
 
-export async function startRun(workerId, scenario) {
+/**
+ * Register a build name for a test session. Called ONCE at the start of a pytest session.
+ * Auto-numbers same-day duplicates: "CRM" → "CRM", next session → "CRM#2", etc.
+ * Returns the resolved name so ALL runs in that session use the same name.
+ */
+export async function registerBuild(baseName) {
+  if (!baseName) return null
+
+  // Count DISTINCT build names today that match this base name
+  const { rows } = await pool.query(
+    `SELECT COUNT(DISTINCT build_name)::int AS cnt FROM runs
+     WHERE (build_name = $1 OR build_name LIKE $2)
+       AND started_at::date = CURRENT_DATE`,
+    [baseName, baseName + '#%'],
+  )
+  const count = rows[0].cnt
+  if (count === 0) return baseName
+  return `${baseName}#${count + 1}`
+}
+
+export async function startRun(workerId, scenario, buildName) {
   // If another call is already inserting a run for this worker, wait for it to finish
   if (startLocks.has(workerId)) {
     await startLocks.get(workerId)
@@ -68,12 +88,12 @@ export async function startRun(workerId, scenario) {
   startLocks.set(workerId, new Promise((r) => { resolveLock = r }))
   try {
     const { rows } = await pool.query(
-      `INSERT INTO runs (worker_id, scenario) VALUES ($1, $2) RETURNING run_id`,
-      [workerId, scenario || null],
+      `INSERT INTO runs (worker_id, scenario, build_name) VALUES ($1, $2, $3) RETURNING run_id`,
+      [workerId, scenario || null, buildName || null],
     )
     const runId = rows[0].run_id
     activeRuns.set(workerId, runId)
-    console.log(`[runs] started run ${runId} worker=${workerId} scenario=${scenario}`)
+    console.log(`[runs] started run ${runId} worker=${workerId} scenario=${scenario} build=${buildName}`)
     return runId
   } finally {
     startLocks.delete(workerId)
@@ -148,7 +168,7 @@ export async function listRuns({ limit = 50, offset = 0, status } = {}) {
 
   const { rows } = await pool.query(
     `SELECT r.id, r.run_id, r.worker_id, r.scenario, r.status,
-            r.started_at, r.finished_at, r.video_filename,
+            r.started_at, r.finished_at, r.video_filename, r.build_name,
             COUNT(rc.id)::int AS command_count
      FROM runs r
      LEFT JOIN run_commands rc ON rc.run_id = r.run_id
@@ -157,6 +177,101 @@ export async function listRuns({ limit = 50, offset = 0, status } = {}) {
      ORDER BY r.started_at DESC
      LIMIT $${values.length - 1} OFFSET $${values.length}`,
     values,
+  )
+  return rows
+}
+
+/**
+ * List builds — groups runs by build_name. Runs without a build_name are listed individually.
+ * Each build row aggregates: run count, total commands, overall status, time range.
+ */
+export async function listBuilds({ limit = 50, offset = 0 } = {}) {
+  // Grouped builds (runs that share a build_name)
+  const { rows: grouped } = await pool.query(
+    `SELECT
+       build_name,
+       COUNT(*)::int                          AS run_count,
+       SUM(cmd_counts.cnt)::int               AS command_count,
+       MIN(r.started_at)                       AS started_at,
+       MAX(r.finished_at)                      AS finished_at,
+       BOOL_OR(r.status = 'running')           AS has_running,
+       BOOL_OR(r.status = 'failed')            AS has_failed,
+       BOOL_AND(r.status IN ('completed'))     AS all_passed,
+       COUNT(*) FILTER (WHERE r.status = 'completed')::int AS passed_count,
+       COUNT(*) FILTER (WHERE r.status = 'failed')::int    AS failed_count,
+       COUNT(*) FILTER (WHERE r.status = 'running')::int   AS running_count
+     FROM runs r
+     LEFT JOIN LATERAL (
+       SELECT COUNT(*)::int AS cnt FROM run_commands WHERE run_id = r.run_id
+     ) cmd_counts ON true
+     WHERE r.build_name IS NOT NULL
+     GROUP BY build_name
+     ORDER BY MIN(r.started_at) DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset],
+  )
+
+  // Individual runs without a build_name
+  const { rows: ungrouped } = await pool.query(
+    `SELECT r.run_id, r.worker_id, r.scenario, r.status,
+            r.started_at, r.finished_at, r.video_filename,
+            COUNT(rc.id)::int AS command_count
+     FROM runs r
+     LEFT JOIN run_commands rc ON rc.run_id = r.run_id
+     WHERE r.build_name IS NULL
+     GROUP BY r.id
+     ORDER BY r.started_at DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset],
+  )
+
+  // Merge both lists, sorted by started_at DESC
+  const builds = grouped.map((b) => ({
+    type: 'build',
+    build_name: b.build_name,
+    run_count: b.run_count,
+    command_count: b.command_count || 0,
+    started_at: b.started_at,
+    finished_at: b.finished_at,
+    status: b.has_running ? 'running' : b.has_failed ? 'failed' : 'completed',
+    passed_count: b.passed_count,
+    failed_count: b.failed_count,
+    running_count: b.running_count,
+  }))
+
+  const singles = ungrouped.map((r) => ({
+    type: 'run',
+    run_id: r.run_id,
+    build_name: r.scenario || null,
+    run_count: 1,
+    command_count: r.command_count,
+    started_at: r.started_at,
+    finished_at: r.finished_at,
+    status: r.status,
+    passed_count: r.status === 'completed' ? 1 : 0,
+    failed_count: r.status === 'failed' ? 1 : 0,
+    running_count: r.status === 'running' ? 1 : 0,
+  }))
+
+  return [...builds, ...singles].sort(
+    (a, b) => new Date(b.started_at) - new Date(a.started_at),
+  )
+}
+
+/**
+ * Get all runs belonging to a specific build name.
+ */
+export async function getBuildRuns(buildName) {
+  const { rows } = await pool.query(
+    `SELECT r.run_id, r.worker_id, r.scenario, r.status,
+            r.started_at, r.finished_at, r.video_filename, r.build_name,
+            COUNT(rc.id)::int AS command_count
+     FROM runs r
+     LEFT JOIN run_commands rc ON rc.run_id = r.run_id
+     WHERE r.build_name = $1
+     GROUP BY r.id
+     ORDER BY r.started_at DESC`,
+    [buildName],
   )
   return rows
 }

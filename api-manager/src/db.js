@@ -61,6 +61,14 @@ export async function initDb() {
     END $$
   `)
 
+  // Migration: add build_name column for grouping runs into builds
+  await pool.query(`
+    DO $$ BEGIN
+      ALTER TABLE runs ADD COLUMN IF NOT EXISTS build_name TEXT;
+    EXCEPTION WHEN duplicate_column THEN NULL;
+    END $$
+  `)
+
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_run_commands_run_id    ON run_commands(run_id)`)
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_run_logs_run_id        ON run_logs(run_id)`)
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_run_screenshots_run_id ON run_screenshots(run_id)`)
